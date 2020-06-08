@@ -96,7 +96,7 @@ CONFIG_ENABLE_COLOR = 1
 CONFIG_DISPLAY_DISASSEMBLY_BYTES = 1
 CONFIG_DISASSEMBLY_LINE_COUNT = 8
 CONFIG_USE_CUSTOM_DISASSEMBLY_FORMAT = 1
-CONFIG_DISPLAY_STACK_WINDOW = 0
+CONFIG_DISPLAY_STACK_WINDOW = 1
 CONFIG_DISPLAY_FLOW_WINDOW = 0
 CONFIG_ENABLE_REGISTER_SHORTCUTS = 1
 CONFIG_DISPLAY_DATA_WINDOW = 0
@@ -117,10 +117,10 @@ CONFIG_LOG_LEVEL = "LOG_NONE"
 CUSTOM_DISASSEMBLY_FORMAT = "\"{${function.initial-function}{${function.name-without-args}} @ {${module.file.basename}}:\n}{${function.changed}\n{${function.name-without-args}} @ {${module.file.basename}}:\n}{${current-pc-arrow} }${addr-file-or-load}: \""
 
 # default colors - modify as you wish
-COLOR_REGVAL           = "BLACK"
-COLOR_REGNAME          = "GREEN"
+COLOR_REGVAL           = "WHITE"
+COLOR_REGNAME          = "BLUE"
 COLOR_CPUFLAGS         = "RED"
-COLOR_SEPARATOR        = "BLUE"
+COLOR_SEPARATOR        = "GRAY"
 COLOR_HIGHLIGHT_LINE   = "RED"
 COLOR_REGVAL_MODIFIED  = "RED"
 COLOR_SYMBOL_NAME      = "BLUE"
@@ -141,7 +141,8 @@ COLORS = {
             "WHITE":     "\033[37m",
             "RESET":     "\033[0m",
             "BOLD":      "\033[1m",
-            "UNDERLINE": "\033[4m"
+            "UNDERLINE": "\033[4m",
+            "GRAY" : "\033[1;38;5;240m",
          }
 
 DATA_WINDOW_ADDRESS = 0
@@ -193,7 +194,7 @@ def __lldb_init_module(debugger, internal_dict):
 
     # settings
     ci.HandleCommand("settings set target.x86-disassembly-flavor intel", res)
-    ci.HandleCommand("settings set prompt \"(lldbinit) \"", res)
+    ci.HandleCommand("settings set prompt \":> \"", res)
     #lldb.debugger.GetCommandInterpreter().HandleCommand("settings set prompt \"\033[01;31m(lldb) \033[0m\"", res);
     ci.HandleCommand("settings set stop-disassembly-count 0", res)
     # set the log level - must be done on startup?
@@ -328,7 +329,8 @@ def __lldb_init_module(debugger, internal_dict):
     return
 
 def cmd_banner(debugger,command,result,dict):    
-    print(COLORS["RED"] + "[+] Loaded lldbinit version: " + VERSION + COLORS["RESET"])
+    #print(COLORS["RED"] + "[+] Loaded jdb init : " + VERSION + COLORS["RESET"])
+    return 
 
 def cmd_lldbinitcmds(debugger, command, result, dict):
     '''Display all available lldbinit commands.'''
@@ -1874,16 +1876,42 @@ def hexdump(addr, chars, sep, width, lines=5):
             break
         line = chars[:width]
         chars = chars[width:]
-        line = line.ljust( width, '\000' )
+        line = line.ljust( width, b'\x00' )
         arch = get_arch()
         if get_pointer_size() == 4:
             szaddr = "0x%.08X" % addr
         else:
             szaddr = "0x%.016lX" % addr
-        l.append("\033[1m%s :\033[0m %s%s \033[1m%s\033[0m" % (szaddr, sep.join( "%02X" % ord(c) for c in line ), sep, quotechars( line )))
+        l.append("\033[36m%s\033[0m│+0x%04x: %s%s \033[1m%s\033[0m" % (szaddr,line_count*16 ,sep.join( "%02X" % c for c in line ), sep, quotechars( line )))
         addr += 0x10
         line_count = line_count + 1
     return "\n".join(l)
+
+def hexdumpStack(addr, chars, sep, width, lines=5):
+    l = []
+    line_count = 0
+    while chars:
+        if line_count >= lines:
+            break
+        line = chars[:width]
+        chars = chars[width:]
+        line = line.ljust( width, b'\x00' )
+        arch = get_arch()
+        addr1 = line[0:8] # struct.unpack("<Q", addr1)[0]
+        addr2 = line[8:16] # struct.unpack("<Q", addr2)[0]
+
+        if get_pointer_size() == 4:
+            l.append("\033[36m0x%.08x\033[0m│+0x%04x: 0x%08x" % (addr, line_count*8, struct.unpack("<Q", addr1)[0] ))
+            l.append("\033[36m0x%.08x\033[0m│+0x%04x: 0x%08x" % (addr+8, (line_count+1)*8, struct.unpack("<Q", addr2)[0] ))
+        else:
+            l.append("\033[36m0x%.016lx\033[0m│+0x%04x: 0x%016x" % (addr, line_count*8, struct.unpack("<Q", addr1)[0] ))
+            l.append("\033[36m0x%.016lx\033[0m│+0x%04x: 0x%016x" % (addr+8, (line_count+1)*8, struct.unpack("<Q", addr2)[0] ))
+        
+        
+        addr += 0x10
+        line_count = line_count + 2
+    return "\n".join(l)
+
 
 def quotechars( chars ):
     data = ""
@@ -2747,200 +2775,60 @@ def reg64():
     gs = registers["gs"]
     fs = registers["fs"]
 
+    for i in ['rax', 'rbx', 'rcx', 'rdx', 'rsp', 'rbp', 'rsi', 'rdi', 'rip', 'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15']:
+        code = '''
+color(COLOR_REGNAME)
+if '{reg}' == 'r8' or '{reg}' == 'r9':
+    output("${reg}    : ")
+else:
+    output("${reg}   : ")
+if {reg} == old_x64["{reg}"]:
+    color(COLOR_REGVAL)
+else:
+    color(COLOR_REGVAL_MODIFIED)
+output("0x%.016lx" % ({reg}))
+old_x64["{reg}"] = {reg}
+output("\\n")'''.format(reg=i)
+        exec(code)
+
     color(COLOR_REGNAME)
-    output("  RAX: ")
-    if rax == old_x64["rax"]:
+    output('$eflags: ')
+    if rflags == old_x64['rflags']:
         color(COLOR_REGVAL)
     else:
         color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (rax))
-    old_x64["rax"] = rax
-    
+    output("0x%lx" % (rflags))
+    old_x64['rflags'] = rflags
+    output('\n')
+
+
     color(COLOR_REGNAME)
-    output("  RBX: ")
-    if rbx == old_x64["rbx"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (rbx))
-    old_x64["rbx"] = rbx
-    
-    color(COLOR_REGNAME)
-    output("  RBP: ")
-    if rbp == old_x64["rbp"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (rbp))
-    old_x64["rbp"] = rbp
-    
-    color(COLOR_REGNAME)
-    output("  RSP: ")
-    if rsp == old_x64["rsp"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (rsp))
-    old_x64["rsp"] = rsp
-    
-    output("  ")
-    color("BOLD")
-    color("UNDERLINE")
-    color(COLOR_CPUFLAGS)
-    dump_eflags(rflags)
-    color("RESET")
-    
-    output("\n")
-            
-    color(COLOR_REGNAME)
-    output("  RDI: ")
-    if rdi == old_x64["rdi"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (rdi))
-    old_x64["rdi"] = rdi
-    
-    color(COLOR_REGNAME)
-    output("  RSI: ")
-    if rsi == old_x64["rsi"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (rsi))
-    old_x64["rsi"] = rsi
-    
-    color(COLOR_REGNAME)
-    output("  RDX: ")
-    if rdx == old_x64["rdx"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (rdx))
-    old_x64["rdx"] = rdx
-    
-    color(COLOR_REGNAME)
-    output("  RCX: ")
-    if rcx == old_x64["rcx"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (rcx))
-    old_x64["rcx"] = rcx
-    
-    color(COLOR_REGNAME)
-    output("  RIP: ")
-    if rip == old_x64["rip"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (rip))
-    old_x64["rip"] = rip
-    output("\n")
-        
-    color(COLOR_REGNAME)
-    output("  R8:  ")
-    if r8 == old_x64["r8"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (r8))
-    old_x64["r8"] = r8
-    
-    color(COLOR_REGNAME)
-    output("  R9:  ")
-    if r9 == old_x64["r9"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (r9))
-    old_x64["r9"] = r9
-    
-    color(COLOR_REGNAME)
-    output("  R10: ")
-    if r10 == old_x64["r10"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (r10))
-    old_x64["r10"] = r10
-    
-    color(COLOR_REGNAME)
-    output("  R11: ")
-    if r11 == old_x64["r11"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (r11))
-    old_x64["r11"] = r11
-    
-    color(COLOR_REGNAME)
-    output("  R12: ")
-    if r12 == old_x64["r12"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (r12))
-    old_x64["r12"] = r12
-    
-    output("\n")
-        
-    color(COLOR_REGNAME)
-    output("  R13: ")
-    if r13 == old_x64["r13"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (r13))
-    old_x64["r13"] = r13
-    
-    color(COLOR_REGNAME)
-    output("  R14: ")
-    if r14 == old_x64["r14"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (r14))
-    old_x64["r14"] = r14
-    
-    color(COLOR_REGNAME)
-    output("  R15: ")
-    if r15 == old_x64["r15"]:
-        color(COLOR_REGVAL)
-    else:
-        color(COLOR_REGVAL_MODIFIED)
-    output("0x%.016lX" % (r15))
-    old_x64["r15"] = r15
-    output("\n")
-        
-    color(COLOR_REGNAME)
-    output("  CS:  ")
+    output("$cs: ")
     if cs == old_x64["cs"]:
         color(COLOR_REGVAL)
     else:
         color(COLOR_REGVAL_MODIFIED)
-    output("%.04X" % (cs))
+    output("0x%04x " % (cs))
     old_x64["cs"] = cs
         
     color(COLOR_REGNAME)
-    output("  FS: ")
+    output("$fs: ")
     if fs == old_x64["fs"]:
         color(COLOR_REGVAL)
     else:
         color(COLOR_REGVAL_MODIFIED)
-    output("%.04X" % (fs))
+    output("0x%04x " % (fs))
     old_x64["fs"] = fs
     
     color(COLOR_REGNAME)
-    output("  GS: ")
+    output("$gs: ")
     if gs == old_x64["gs"]:
         color(COLOR_REGVAL)
     else:
         color(COLOR_REGVAL_MODIFIED)
-    output("%.04X" % (gs))
+    output("0x%04x " % (gs))
     old_x64["gs"] = gs
     
-    dump_jumpx86(rflags)
     output("\n")
 
 def reg32():
@@ -3466,7 +3354,8 @@ def disassemble(start_address, count):
         file_inst = instructions_file[count]
         # try to extract the symbol name from this location if it exists
         # needs to be referenced to file because memory it doesn't work
-        symbol_name = instructions_file[count].addr.GetSymbol().GetName()
+        symbol_name = file_inst.addr.GetSymbol().GetName()
+        
         # if there is no symbol just display module where current instruction is
         # also get rid of unnamed symbols since they are useless
         if symbol_name == None or "___lldb_unnamed_symbol" in symbol_name:
@@ -3559,12 +3448,12 @@ def disassemble(start_address, count):
             if CONFIG_ENABLE_COLOR == 1:
                 color("BOLD")
                 color(COLOR_CURRENT_PC)
-                output("->  0x{:x} (0x{:x}): {}  {}   {}{}".format(memory_addr, file_addr, bytes_string, mnem, operands, comment) + "\n")
+                output("->  0x{:x} <{}+{}>:  {}   {}{}".format(memory_addr,symbol_name,int(file_inst.addr) - int(file_inst.addr.GetSymbol().GetStartAddress()), file_addr, mnem, operands, comment) + "\n")
                 color("RESET")
             else:
-                output("->  0x{:x} (0x{:x}): {}  {}   {}{}".format(memory_addr, file_addr, bytes_string, mnem, operands, comment) + "\n")
+                output("->  0x{:x} <{}+{}>:  {}   {}{}".format(memory_addr,symbol_name,int(file_inst.addr) - int(file_inst.addr.GetSymbol().GetStartAddress()), file_addr, mnem, operands, comment) + "\n")
         else:
-            output("    0x{:x} (0x{:x}): {}  {}   {}{}".format(memory_addr, file_addr, bytes_string, mnem, operands, comment) + "\n")
+            output("    0x{:x} <{}+{}>:  {}   {}{}".format(memory_addr,symbol_name,int(file_inst.addr) - int(file_inst.addr.GetSymbol().GetStartAddress()), file_addr, mnem, operands, comment) + "\n")
 
         count += 1
     
@@ -3897,7 +3786,7 @@ def display_stack():
         print("[-] error: not enough bytes read.")
         return
 
-    output(hexdump(stack_addr, membuff, " ", 16, 4))
+    output(hexdumpStack(stack_addr, membuff, " ", 16))
 
 def display_data():
     '''Hex dump current data window pointer'''
@@ -4195,24 +4084,26 @@ def HandleHookStopOnTarget(debugger, command, result, dict):
         return
     
     color(COLOR_SEPARATOR)
-    if is_i386() or is_arm():
-        output("---------------------------------------------------------------------------------")
-    elif is_x64():
-        output("-----------------------------------------------------------------------------------------------------------------------")
+  
+    output('─' * 152)
             
-    color("BOLD")
-    output("[regs]\n")
+    color("CYAN")
+    output(" register ")
+    color("RESET")
+    color(COLOR_SEPARATOR)
+    output("────\n")
     color("RESET")
     print_registers()
 
     if CONFIG_DISPLAY_STACK_WINDOW == 1:
         color(COLOR_SEPARATOR)
-        if is_i386() or is_arm():
-            output("--------------------------------------------------------------------------------")
-        elif is_x64():
-            output("----------------------------------------------------------------------------------------------------------------------")
-        color("BOLD")
-        output("[stack]\n")
+        output('─'*156)
+
+        color("CYAN")
+        output(" stack ")
+        color("RESET")
+        color(COLOR_SEPARATOR)
+        output("────\n")
         color("RESET")
         display_stack()
         output("\n")
@@ -4241,22 +4132,20 @@ def HandleHookStopOnTarget(debugger, command, result, dict):
         display_indirect_flow()
 
     color(COLOR_SEPARATOR)
-    if is_i386() or is_arm():
-        output("---------------------------------------------------------------------------------")
-    elif is_x64():
-        output("-----------------------------------------------------------------------------------------------------------------------")
-    color("BOLD")
-    output("[code]\n")
+    output('─'*157)
+
+    color("CYAN")
+    output(" code ")
+    color("RESET")
+    color(COLOR_SEPARATOR)
+    output("────\n")
     color("RESET")
             
     # disassemble and add its contents to output inside
     disassemble(get_current_pc(), CONFIG_DISASSEMBLY_LINE_COUNT)
         
     color(COLOR_SEPARATOR)
-    if get_pointer_size() == 4: #is_i386() or is_arm():
-        output("---------------------------------------------------------------------------------------")
-    elif get_pointer_size() == 8: #is_x64():
-        output("-----------------------------------------------------------------------------------------------------------------------------")
+    output('─'*167)
     color("RESET")
     
     # XXX: do we really need to output all data into the array and then print it in a single go? faster to just print directly?
