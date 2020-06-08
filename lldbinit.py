@@ -3448,12 +3448,12 @@ def disassemble(start_address, count):
             if CONFIG_ENABLE_COLOR == 1:
                 color("BOLD")
                 color(COLOR_CURRENT_PC)
-                output("->  0x{:x} <{}+{}>:  {}   {}{}".format(memory_addr,symbol_name,int(file_inst.addr) - int(file_inst.addr.GetSymbol().GetStartAddress()), file_addr, mnem, operands, comment) + "\n")
+                output("->  0x{:x} <{}+{}>:  {}   {}{}".format(memory_addr,symbol_name,int(file_inst.addr) - int(file_inst.addr.GetSymbol().GetStartAddress()), mnem, operands, comment) + "\n")
                 color("RESET")
             else:
-                output("->  0x{:x} <{}+{}>:  {}   {}{}".format(memory_addr,symbol_name,int(file_inst.addr) - int(file_inst.addr.GetSymbol().GetStartAddress()), file_addr, mnem, operands, comment) + "\n")
+                output("->  0x{:x} <{}+{}>:  {}   {}{}".format(memory_addr,symbol_name,int(file_inst.addr) - int(file_inst.addr.GetSymbol().GetStartAddress()), mnem, operands, comment) + "\n")
         else:
-            output("    0x{:x} <{}+{}>:  {}   {}{}".format(memory_addr,symbol_name,int(file_inst.addr) - int(file_inst.addr.GetSymbol().GetStartAddress()), file_addr, mnem, operands, comment) + "\n")
+            output("    0x{:x} <{}+{}>:  {}   {}{}".format(memory_addr,symbol_name, int(file_inst.addr) - int(file_inst.addr.GetSymbol().GetStartAddress()), mnem, operands, comment) + "\n")
 
         count += 1
     
